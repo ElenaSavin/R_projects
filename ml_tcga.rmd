@@ -1,0 +1,727 @@
+---
+title: "TCGA pan-cancer analysis"
+author: "Lena Savin"
+Date: 25/6/20
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_float: yes
+    highlight: zenburn
+    theme: flatly
+---
+
+This analysis is focused on the TCGA clinical Data from patients in all projects .  
+The data was downloaded from the TCGA using the TCGAbiolinks library.  
+My MSc project is analysis of all the RNA-seq data on the TCGA and therefore analysis of the clinical metadata will give my project a bigger and wider picture of the results.   
+
+### Import and primary clean
+uploading the necessary libraries.
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(skimr)
+library(ggplot2)
+library(caret)
+library(ROCR)
+library(psych)
+```
+
+My dataset includes all TCGA clinical data. the data was downloaded directly from the tcga using TCGAbiolinks package and saved into a csv file "clinical_data_TCGA.csv" attached.  
+```{r, eval=FALSE}
+library(TCGAbiolinks)
+dataset_list <- as.factor(grep("^TCGA-", 
+                               getGDCprojects()$project_id, value = TRUE))
+for (dataset in dataset_list) {
+  print(dataset)
+  data <- GDCquery_clinic(project = dataset, type = "clinical")
+  value <- assign(paste(dataset, "clinical", sep = "_"), data)
+}
+
+```
+
+Merging them- my final Data set for work is clinical_data_TCGA 
+```{r, eval=FALSE}
+list <- Filter(function(x) is(x, "data.frame"), mget(ls()))
+clinical_data_TCGA <- bind_rows(list)
+write.csv(clinical_data_TCGA, "clinical_data_TCGA.csv", na = "NA")
+```
+  
+Reading the data into a data frame, where na is all the places where there is a missing value, space or explicitly "NA".
+```{r}
+clinical_data_TCGA <- read.csv("clinical_data_TCGA.csv", 
+                               stringsAsFactors = T, na.strings=c(""," ","NA"))
+skim(clinical_data_TCGA)
+```
+  
+Leaving in the data frame only the features with less than 1000 NA’s - these features have a lot of the data missing, therefore do not contribute enough to the dataset.  
+Removing all rows with NA's to avoid missing values issues.  
+```{r}
+clinical_data_TCGA <- select_if(clinical_data_TCGA, funs(sum(is.na(.)) <= 1000))
+clinical_data_TCGA <- as.data.frame(unclass(clinical_data_TCGA))
+clinical_data_TCGA <- na.omit(clinical_data_TCGA)
+```
+  
+Taking a look at the variables left. there are 39 features left. next i will use manual feature selection to remove redundant or unproductive features.    
+```{r}
+str(clinical_data_TCGA)
+```
+
+### Feature selection  
+The id columns give no additive information, and are keys to other datasets available on the GDC, for example the diagnosis_id is the patients id in the diagnosis dataset (description: https://docs.gdc.cancer.gov/Data_Dictionary/viewer/#?view=table-definition-view&id=diagnosis)  
+days_to_birth gives the same information as age at index.
+other variables removed have only one value.
+```{r}
+clinical_data_TCGA <- dplyr::select(clinical_data_TCGA, -updated_datetime, 
+                                    -icd_10_code, -progression_or_recurrence ,
+                      -tumor_grade, -days_to_diagnosis, -classification_of_tumor, 
+                      -state, -last_known_disease_status, -diagnosis_id, 
+                      -exposure_id, -demographic_id, 
+                      -treatments_pharmaceutical_treatment_id, 
+                      -treatments_pharmaceutical_treatment_type,
+                      -bcr_patient_barcode, 
+                      -treatments_radiation_treatment_id, 
+                      -treatments_radiation_treatment_type, -alcohol_history, 
+                      -days_to_birth, -submitter_id, -X)
+str(clinical_data_TCGA)
+```
+
+Randomizing the data to avoid incline or specific grous only in training or only in test sets.    
+```{r}
+set.seed(120)
+clinical_data_TCGA <- clinical_data_TCGA[sample(1:nrow(clinical_data_TCGA)),]
+```
+  
+### Visualisation and cleaning
+Plotting the distribution of the categorical features to detect patterns and get to know the data better.  
+```{r, warning=FALSE}
+library(RColorBrewer)
+nb.cols <- 33
+mycolors <- colorRampPalette(brewer.pal(33, "Set3"))(nb.cols)
+
+ggplot(clinical_data_TCGA, aes(x=as.factor(race), fill=as.factor(race))) + 
+  geom_bar() + labs(title="Number of patients in each race", x = "Race") +
+  theme(axis.text.x =element_text(angle = 50, hjust = 1), 
+        plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+ggplot(clinical_data_TCGA, aes(x=as.factor(tumor_stage), 
+                               fill=as.factor(tumor_stage))) + geom_bar() + 
+  labs(title="Number of patients with each of the tumor stages", 
+       x = "Tumor stage") +
+theme(axis.text.x =element_text(angle = 50, hjust = 1), 
+      plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_manual(values = mycolors)
+
+ggplot(clinical_data_TCGA, aes(x=as.factor(ethnicity), 
+                               fill=as.factor(ethnicity))) + geom_bar() +
+  labs(title="Number of patients in each ethnicity group", x = "ethnicity") +
+  theme(axis.text.x =element_text(angle = 50, hjust = 1), 
+        plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+ggplot(clinical_data_TCGA, aes(x=as.factor(gender), 
+                               fill=as.factor(gender))) + geom_bar() +
+  labs(title="Number of patients in each gender group", x = "Gender") +
+  theme( plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+ggplot(clinical_data_TCGA, aes(x=as.factor(vital_status), 
+                               fill=as.factor(vital_status))) + geom_bar() +
+  labs(title="Number of patients in each vital status", x = "Vital Status") +
+  theme(axis.text.x =element_text( hjust = 1), 
+        plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+
+ggplot(clinical_data_TCGA, 
+       aes(x=as.factor(treatments_pharmaceutical_treatment_or_therapy), 
+           fill=as.factor(treatments_pharmaceutical_treatment_or_therapy))) + 
+  geom_bar() +
+  labs(title="Number of patients in pharmaceutical treatment or therapy", 
+       x = "Pharmaceutical treatment or therapy") +
+  theme(axis.text.x =element_text( hjust = 1), 
+        plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+```
+  
+To make these columns more informative, as i saw in the graphs above, the majority of the data is distributed in these two options. therefore i will change the "race" feature into white and not white(first plot), and the ethnicity (third plot) to "hispanic or latino" and "not hispanic or latino".  
+```{r}
+#change race to white and not white
+clinical_data_TCGA$race <-
+  ifelse(clinical_data_TCGA$race == "white", 1, 0)
+
+#change ethnicity to hispanic or latino and not hispanic or latino
+clinical_data_TCGA$hispanic_or_latino <-
+  ifelse(clinical_data_TCGA$ethnicity == "not hispanic or latino", 0, 1)
+clinical_data_TCGA <- clinical_data_TCGA %>% dplyr::select(-ethnicity)
+```
+  
+Looking at features left for modeling and describing them:
+
+```{r}
+colnames(clinical_data_TCGA)
+```
+**_tissue_or_organ_of_origin_** -  the anatomic site of origin, of the patient's malignant disease.  
+**_prior_malignancy_** - yes/no if a patient had a prior malignancy.  
+**_year_of_diagnosis_** - Numeric value to represent the year of an individual's initial pathologic diagnosis of cancer.  
+**_Tumor stage_** - Stage group determined from clinical information on the tumor (T), regional node (N) and metastases (M) and by grouping cases with similar prognosis for cancer. 
+**_prior_treatment_** - yes/no if a patient had a prior cancer treatment.  
+**_morphology_** - enum where each represents the biopsy morphology.  
+**_site_of_resection_or_biopsy_** - organ of resection or biopsy.  
+**_synchronous_malignancy_** - A yes/no/unknown indicator used to describe whether the patient had an additional malignant diagnosis at the same time the tumor used for sequencing was diagnosed.  
+**_age_at_diagnosis_** - Age at the time of diagnosis expressed in number of days since birth.  
+**_primary_diagnosis_** - The patient's histologic diagnosis, as described by the World Health Organization's (WHO) International Classification of Diseases for Oncology (ICD-O).  
+**_race_** - If the patient is white or not.  
+**_vital_status_** - dead or alive.  
+**_gender_** - patients gender.  
+**_year_of_birth_** - Numeric value to represent the calendar year in which an individual was born.  
+**_age_at_index_** - The patient's age (in years) on the reference or anchor date date used during date obfuscation.  
+**_treatments_pharmaceutical_treatment_or_therapy_** - yes/no if a patient had pharmaceutical treatment or therapy.  
+**_treatments_radiation_treatment_or_therapy_** - yes/no if a patient had radiation or therapy.  
+**_disease_** - project name.  
+**_hispanic_or_latino_** - If the patient is hispanic or latino.  
+  
+
+Turning age in days to years scale to create a identical scale for visualization with all other numerical features which are in years.
+  
+```{r}
+clinical_data_TCGA$age_at_diagnosis <- 
+  clinical_data_TCGA$age_at_diagnosis / 365
+summary(clinical_data_TCGA$age_at_diagnosis) 
+```
+
+Plotting the distribution of the numerical features.  
+```{r}
+ggplot(clinical_data_TCGA, aes(x=year_of_diagnosis, fill=year_of_diagnosis)) + 
+  geom_histogram(binwidth = 1) +
+  labs(title="Year of diagnosis distribution", x = "Years") +
+  theme(axis.text.x =element_text(angle = 50, hjust = 0.5), 
+        plot.title = element_text(hjust = 0.5), legend.position = "none") +
+  scale_fill_manual(values = mycolors)
+
+
+ggplot(clinical_data_TCGA, aes(x=age_at_diagnosis)) + 
+  geom_histogram(binwidth = 1) +
+  labs(title="Age at diagnosis distribution", x = "Years") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(clinical_data_TCGA, aes(x=year_of_birth)) + 
+  geom_histogram(binwidth = 1) +
+  labs(title="Year of birth distribution", x = "Years") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(clinical_data_TCGA, aes(x=age_at_index)) + 
+  geom_histogram(binwidth = 1) +
+  labs(title="Patient's age distribution", x = "Years") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+  
+Except from "Year of diagnosis distribution" seems to distribute normaly or a little incline to left or right.  
+Year of diagnosis distribution has a long left tail.  
+  
+  
+Looking at categorical features to detect and manage missing data:
+```{r}
+round(prop.table(table(clinical_data_TCGA$
+                         treatments_radiation_treatment_or_therapy))*100, 
+      digits = 1)
+round(prop.table(table(clinical_data_TCGA$vital_status))*100, digits = 1)
+round(prop.table(table(clinical_data_TCGA$synchronous_malignancy))*100, 
+      digits = 1)
+round(prop.table(table(clinical_data_TCGA$prior_malignancy))*100, digits = 1)
+round(prop.table(table(clinical_data_TCGA$prior_treatment))*100, digits = 1)
+round(prop.table(table(clinical_data_TCGA$gender))*100, digits = 1)
+```
+  
+In order to avoid loosing more data i am substituting the not reported into no, and adding a column of not reported as: if yes: 1, 0 otherwise, in all columns with yes/no/not reported. and checking the percentage again.
+```{r, warning=FALSE, message=FALSE}
+clinical_data_TCGA$treatments_radiation_treatment_or_therapy_not_reported <-
+  ifelse(clinical_data_TCGA$
+           treatments_radiation_treatment_or_therapy == "not reported", 1, 0)
+clinical_data_TCGA$treatments_radiation_treatment_or_therapy[
+  clinical_data_TCGA$
+    treatments_radiation_treatment_or_therapy == "not reported"] <- "no"
+
+
+#Since this is the predicting class i am not going to add a not reported column
+clinical_data_TCGA$treatments_pharmaceutical_treatment_or_therapy[
+  clinical_data_TCGA$
+    treatments_pharmaceutical_treatment_or_therapy == "not reported"] <- "no"
+
+clinical_data_TCGA$prior_malignancy_not_reported <-
+  ifelse(clinical_data_TCGA$prior_malignancy == "not reported", 1, 0)
+clinical_data_TCGA$
+  prior_malignancy[clinical_data_TCGA$prior_malignancy == 
+                     "not reported"] <- "no"
+
+# since there are only 4 not reported, 
+#i will not add a "not reported column for this category, 
+#as all of it, except for 4 values will be zeros.
+clinical_data_TCGA$prior_treatment[clinical_data_TCGA$
+                                     prior_treatment == "Not Reported"] <- "no"
+
+clinical_data_TCGA$vital_status_not_reported <-
+  ifelse(clinical_data_TCGA$vital_status == "Not Reported", 1, 0)
+clinical_data_TCGA$vital_status[clinical_data_TCGA$
+                                  vital_status == "Not Reported"] <- "Dead"
+```
+
+Removed "synchronous_malignancy" and "prior_treatment" since almost all (more than 98%) of the values in both are "no" therefore inclined and can affect the outcome of the algorithms. 
+```{r}
+clinical_data_TCGA <- 
+  clinical_data_TCGA %>% dplyr::select(-synchronous_malignancy, -prior_treatment)
+
+clinical_data_TCGA <- droplevels(clinical_data_TCGA)
+```
+  
+```{r}
+sum(is.na(clinical_data_TCGA))
+```
+There is no more NA's and missing data was managed.  
+  
+I would like to predict whether the patient will have pharmaceutical treatment or therapy,    
+If i could predict this feature, knowing if a patient will go through radiation or pharmaceutical treatment can help determine the best adjuvant therapy if needed and as soon as possible, even before the treatment beginning.  
+Bellow is the percentage of this class to verify they are more or less even and the data is not inclined to one of them.   
+And they are so i can move forward.  
+```{r}
+round(prop.table(table(clinical_data_TCGA$
+                         treatments_pharmaceutical_treatment_or_therapy))*100, 
+      digits = 1)
+```
+
+  
+### Narmalization and last preparations
+Most of the data is categorical, therefore i will use one hot encoder from the "caret" package on these features.  
+The fullRank option marked true allows redundant columns to be removed. for example- if the categorical data has only "yes"/"no" there will be one column created as yes and there will be 1 if the value was yes and 0 if the value was no.  
+```{r, warning=FALSE, message=FALSE}
+dummies_model <- dummyVars(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+                           data=clinical_data_TCGA, fullRank=T)
+
+Data_mat <- predict(dummies_model, newdata = clinical_data_TCGA)
+
+clinical_data_TCGA_bin <- data.frame(Data_mat)
+clinical_data_TCGA_bin$treatments_pharmaceutical_treatment_or_therapy <-
+  clinical_data_TCGA$treatments_pharmaceutical_treatment_or_therapy
+```
+  
+Since there are only 4 rows with added NA's during prediction, and this will not affect the results significantly, i will omit them.
+```{r}
+sum(is.na(clinical_data_TCGA_bin))
+clinical_data_TCGA_bin <- na.omit(clinical_data_TCGA_bin)
+```
+
+Normalize the numeric columns: year_of_diagnosis, age_at_diagnosis, year_of_birth, age_at_index for values between 0 and 1.
+```{r}
+#create the normalization function:
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+clinical_data_TCGA_bin$year_of_diagnosis <- 
+  normalize(as.numeric(clinical_data_TCGA_bin$year_of_diagnosis))
+clinical_data_TCGA_bin$age_at_diagnosis <- 
+  normalize(as.numeric(clinical_data_TCGA_bin$age_at_diagnosis))
+clinical_data_TCGA_bin$year_of_birth <- 
+  normalize(as.numeric(clinical_data_TCGA_bin$year_of_birth))
+clinical_data_TCGA_bin$age_at_index <- 
+  normalize(as.numeric(clinical_data_TCGA_bin$age_at_index))
+
+summary(c(clinical_data_TCGA_bin$year_of_diagnosis, 
+          clinical_data_TCGA_bin$age_at_diagnosis, 
+          clinical_data_TCGA_bin$year_of_birth, 
+          clinical_data_TCGA_bin$age_at_index))
+```
+  
+```{r, message=FALSE}
+#move predicting column to be the first
+clinical_data_TCGA_bin <- clinical_data_TCGA_bin %>% 
+  dplyr::select(treatments_pharmaceutical_treatment_or_therapy, everything())
+
+skim(clinical_data_TCGA)
+```
+  
+
+  
+### Dimensionality reduction:  
+### PCA  
+Looking for patterns in the whole data, by finding correlations between variables.  
+PC1 and PC2 explain the highest variability in the data.
+```{r, eval=FALSE}
+pca <- prcomp(clinical_data_TCGA_bin[2:ncol(clinical_data_TCGA_bin)])
+```
+  
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+library(factoextra)
+# Changing the direction of the eigenvectors (they are negative by default)
+pca$rotation <- - pca$rotation
+pca$x <- - pca$x
+str(pca)
+biplot(pca, scale = 0)
+# calculating variance of each PC by squared the std
+VE <- pca$sdev^2
+PVE <- VE / sum(VE)
+round(PVE, 2)
+
+#visualization of pca
+fviz_pca_ind(pca, geom.ind = "point", pointshape = 21, 
+             pointsize = 2, 
+             fill.ind = clinical_data_TCGA_bin$
+               treatments_pharmaceutical_treatment_or_therapy, 
+             col.ind = "black", 
+             palette = "jco", 
+             addEllipses = TRUE,
+             label = "var",
+             col.var = "black",
+             repel = TRUE,
+             legend.title = "Pharmaceutical/therapy") +
+  ggtitle("2D PCA-plot TCGA clinical dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+![](PCA.jpg)  
+  
+### tSNE
+```{r, eval=FALSE}
+library(Rtsne)
+tsne <- Rtsne(clinical_data_TCGA_bin, 
+              check_duplicates = FALSE, pca=FALSE,perplexity=30,theta=0.0)
+
+tsne <- data.frame(tsne$Y)
+plot(tsne, col=clinical_data_TCGA_bin$
+       treatments_pharmaceutical_treatment_or_therapy)
+
+```
+![](tSNE.jpg)
+
+
+Now that the data is ready and i can create training and test sets.  
+I will not use the outcome of PCA or of tSNE since it didn't help in dimension reduction but helped me see the data complexity.  
+```{r, warning=FALSE}
+#80% of the data will be in the training set, the rest in test.
+trainRowNumbers <- 
+  createDataPartition(clinical_data_TCGA_bin$
+                        treatments_pharmaceutical_treatment_or_therapy, 
+                      p=0.8, list=FALSE)
+
+trainData <- clinical_data_TCGA_bin[trainRowNumbers,]
+testData <- clinical_data_TCGA_bin[-trainRowNumbers,]
+
+train_labels = trainData$treatments_pharmaceutical_treatment_or_therapy
+test_labels = testData$treatments_pharmaceutical_treatment_or_therapy
+```  
+  
+### RFE - Recursive Backword Feature Selection  
+Feature selection algorithm using random forest with 4 options for number of features - 10, 300, 500 and all.  
+Printing out the outcome and the selected features.  
+
+```{r, eval=FALSE}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(10, 300, 500, 623)
+
+ctrl <- rfeControl(functions = rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- caret::rfe(x=trainData, 
+                        y=trainData$
+                          treatments_pharmaceutical_treatment_or_therapy,
+                        sizes = subsets,
+                        rfeControl = ctrl)
+lmProfile
+predictors(lmProfile)
+```
+![](FS.jpg)
+  
+### KNN  
+First, i will run knn with k=1 to 40 to see which k will give me the best outcome.
+```{r, eval=FALSE}
+model = train(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+              data=trainData, method='knn', tuneLength = 40)
+fitted <- predict(model, testData, type="prob")
+
+plot(model, main="Model Accuracies with knn")
+```
+  
+
+![](KNN.jpg)
+
+Looks like the best is 7 neighbors.  
+Running KNN with k = 7 to evaluate the outcome:
+
+```{r, warning=FALSE, message=FALSE}
+library(class)
+knn_pred <- knn(train = trainData[2:ncol(trainData)], 
+                      test = testData[2:ncol(testData)], 
+                      cl =train_labels , k=(7))
+confusionMatrix(test_labels, knn_pred, dnn = c('Test Data', 'Predicted'))
+```
+  
+About 80% accuracy.  That's not bad and this seems to be the best outcome i can get with knn. 
+
+### Naive beyes  
+
+```{r, message=FALSE, warning=FALSE}
+library(e1071)
+nb_model <- naiveBayes(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+                       data = trainData)
+nb_mod_pred <- predict(nb_model, testData)
+
+confusionMatrix(test_labels, nb_mod_pred, dnn = c('Test Data', 'Predicted'))
+
+
+#converting predict object into prediction object
+nb_prediction <- prediction(as.numeric(nb_mod_pred), as.numeric(test_labels))
+#calculating performance total
+perf_nb <- ROCR::performance(nb_prediction, "tpr", "fpr")
+
+#calculating auc
+auc <- performance(nb_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding min and max ROC AUC to the center of the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_nb, col="red",colorize=F, main="ROC curve - Naive beyes model")
+line=abline(0,1, col="blue")
+legend(0.05,0.9,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+confusionMatrix(test_labels, knn_pred, dnn = c('Test Data', 'Predicted'))
+```
+
+This model is much worse.  
+It's not bad at predicting yes but very bad at predicting no - only about 30% correct prediction.  
+Also the ROC curve is almost like the random line and AUS is almost 0.5.
+  
+### Disicion tree  
+
+```{r}
+library(C50)
+disicion_tree_model <- 
+  C50::C5.0(trainData[2:ncol(trainData)], 
+            trainData$treatments_pharmaceutical_treatment_or_therapy)
+disicion_tree_model
+
+disicion_tree_model_predict <- predict(disicion_tree_model, testData)
+
+
+
+tree_prediction <- prediction(as.numeric(disicion_tree_model_predict), 
+                              as.numeric(test_labels))
+perf_tree <- ROCR::performance(tree_prediction, "tpr", "fpr")
+
+auc <- performance(tree_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding min and max ROC AUC to the center of the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_tree, col="red", main="ROC curve - disicion tree model")
+line=abline(0,1, col="blue")
+legend(0.6,0.3,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+
+confusionMatrix(test_labels, disicion_tree_model_predict, 
+                dnn = c('Test Data', 'Predicted'))
+```
+
+Correct prediction for about 81%. since most of the values in this data are 1 or 0, as yes or no, it is very intuitive that a decision tree would give good predictions.  
+The auc is not bad.
+I will try to improve these results using random forest.  
+
+### Boosted- random forest with 20 trees  
+```{r}
+random_forst_model <- 
+  C50::C5.0(trainData[2:ncol(trainData)], 
+            trainData$treatments_pharmaceutical_treatment_or_therapy, trials=20)
+random_forst_model
+
+random_forest_model_predict <- predict(random_forst_model, testData)
+
+forest_prediction <- prediction(as.numeric(random_forest_model_predict), 
+                                as.numeric(test_labels))
+perf_forest <- ROCR::performance(forest_prediction, "tpr", "fpr")
+
+auc <- performance(forest_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding max ROC AUC to the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_forest, col="red", main="ROC curve - random forest model")
+line=abline(0,1, col="blue")
+legend(0.6,0.3,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+confusionMatrix(test_labels, random_forest_model_predict, 
+                dnn = c('Test Data', 'Predicted'))
+```
+  
+This result is more or less the same prediction percentage as a single tree, 
+but a little better, about 82%.  
+AUC is higher.
+  
+### Linear kernel SVM
+The vanilladot kernel applies a simple linear kernel.
+```{r, warning=FALSE, message=FALSE}
+library(kernlab)
+svm_model <- ksvm(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+                  data=trainData, kernel="vanilladot")
+svm_model_predict <- predict(svm_model, testData)
+
+
+vanilla_prediction <- prediction(as.numeric(svm_model_predict), 
+                                 as.numeric(test_labels))
+perf_vanilla <- ROCR::performance(vanilla_prediction, "tpr", "fpr")
+
+auc <- performance(vanilla_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding min and max ROC AUC to the center of the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_vanilla, col="red", main="ROC curve - SVM linear model")
+line=abline(0,1, col="blue")
+legend(0.6,0.3,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+
+confusionMatrix(test_labels, svm_model_predict, 
+                dnn = c('Test Data', 'Predicted'))
+```
+  
+The svm algorithm, using a simple linear kernel is not bad 
+but also not the best so far. resulting in about 77%.  
+I will try to improve using other kernels.  
+  
+### Gaussian Radial basis function kernel SVM
+The rbfdot kernel is the standard Gaussian Radial basis function:
+```{r}
+svm_model <- ksvm(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+                  data=trainData, kernel="rbfdot")
+svm_model_predict <- predict(svm_model, testData)
+
+rbf_prediction <- prediction(as.numeric(svm_model_predict), 
+                             as.numeric(test_labels))
+perf_rbf <- ROCR::performance(rbf_prediction, "tpr", "fpr")
+
+auc <- performance(rbf_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding min and max ROC AUC to the center of the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_rbf, col="red", 
+     main="ROC curve - SVM Gaussian Radial basis function model")
+line=abline(0,1, col="blue")
+legend(0.6,0.3,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+confusionMatrix(test_labels, svm_model_predict, 
+                dnn = c('Test Data', 'Predicted'))
+```
+  
+This outcome is much better- around 82%.  
+  
+### Polynomial kernel SVM
+Polydot is the simple polynomial kernel.  
+```{r, message=FALSE, warning=FALSE}
+svm_model <- ksvm(treatments_pharmaceutical_treatment_or_therapy ~ ., 
+                  data=trainData, kernel="polydot")
+svm_model_predict <- predict(svm_model, testData)
+
+poly_prediction <- prediction(as.numeric(svm_model_predict), 
+                              as.numeric(test_labels))
+perf_poly <- ROCR::performance(poly_prediction, "tpr", "fpr")
+
+auc <- performance(poly_prediction, "auc")
+# now converting S4 class to vector
+auc <- unlist(slot(auc, "y.values"))
+# adding min and max ROC AUC to the center of the plot
+maxauc<-max(round(auc, digits = 2))
+maxauct <- paste(c("max(AUC) = "),maxauc,sep="")
+plot(perf_poly, col="red", main="ROC curve - SVM polynomial model")
+line=abline(0,1, col="blue")
+legend(0.6,0.3,c(maxauct,"\n"),border="white",cex=1.0,box.col = "white")
+
+
+confusionMatrix(test_labels, svm_model_predict, 
+                dnn = c('Test Data', 'Predicted'))
+```
+  
+This outcome is more or less like the vanilla dot.  
+
+### K-Means Elbow method  
+K-Means is a non supervised clustering algorithm. using the **elbow method** i will try to detect the best k:
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+set.seed(123)
+library(purrr)
+#Elbow Method for finding the optimal number of clusters
+set.seed(123)
+# Compute and plot wss for k = 2 to k = 20.
+k.max <- 20
+data <- clinical_data_TCGA_bin_z
+wss <- sapply(1:k.max, 
+              function(k){kmeans(data, k, 
+                                 nstart=25,iter.max = 30 )$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+```
+![](KMEANS.jpg)
+  
+  
+Since there is no elbow- the higher  the k the better the outcome i 
+will see what happens with k 3,4,5.  
+  
+### K-Means k=3
+Try with k=3:
+```{r, message=FALSE}
+library(stats)
+library(factoextra)
+set.seed(120)
+clinical_data_TCGA_bin_z <- 
+  scale(clinical_data_TCGA_bin[2:ncol(clinical_data_TCGA)])
+
+kmeans_3 <- kmeans(clinical_data_TCGA_bin_z, 3, nstart=25)
+str(kmeans_3)
+
+fviz_cluster(kmeans_3, data = clinical_data_TCGA_bin_z)
+```
+  
+I will try to improve.
+  
+### K-Means k=4
+Try with k=4:  
+```{r}
+set.seed(120)
+kmeans_4 <- kmeans(clinical_data_TCGA_bin_z, 4, nstart=25)
+str(kmeans_4)
+
+fviz_cluster(kmeans_4, data = clinical_data_TCGA_bin_z)
+```
+  
+There are clusters which is not bad, i will try with a higher k.  
+  
+### K-Means k=5
+Try with k=5:
+```{r}
+kmeans_5 <- kmeans(clinical_data_TCGA_bin_z, 5, nstart=25)
+str(kmeans_5)
+
+fviz_cluster(kmeans_5, data = clinical_data_TCGA_bin_z)
+```
+  
+There are more clusters - this supports the elbow method- the higher the better. 
+
+### Conclusions:  
+1. PCA/tSNE did not help with dimension reduction  
+but it did help me see the data is not linear and understand its structure better. 
+2. Feature selection algorithm has long computational running time - about 4 days and might be challenging to use on this data.
+3. Naive beyes is not a good algorithm for this data and the chosen classes as the results indicate.
+4. KNN with 7 neighbors gives a good outcome with about 80% accuracy.
+5. SVM – Gaussian is the best from the tested kernels with 81% accuracy.
+6. Random forest is better than a single tree and best of all algorithms.
+7. K-Means– the higher the better.
+
+The algorithm i would use to determine if a patient will get pharmaceutical  
+treatment or radiotherapy – Random forest with 82% accuracy and 0.81 AUC.
+
+

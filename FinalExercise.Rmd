@@ -1,0 +1,240 @@
+---
+title: "309986255_302631361 final Exercise"
+subtitle: "dataset number: 21 - 'Wong'"
+author: "Lena Savin and Kobi Shapira"
+date: "19.05.20"
+output:
+  prettydoc::html_pretty:
+    highlight: vignette
+    theme: architect
+---
+
+### Question 1:  
+### Using the helper function in R, identify the library where your dataset is stored. Install relevant libraries and call your dataset.  
+The sos library contains a function "findFn" which looks for datasets available in all available r packeges online, and opens the result in a default browser. 
+```{r setup, message=FALSE, warning=FALSE}
+library("sos")
+findFn("Wong")
+library("carData")
+data("Wong")
+wong_data <- Wong
+``` 
+In the output here we found the relevant package for the "Wong" dataset: carData, installed the package, imported it and attached the dataset into a local variable "wong_data".      
+
+### Question 2:  
+### a.What is the size of your dataset? What do the different variables mean? Write a short description (1 line) per variable. You may rely on any information you can find on the internet or use the helper function in R. 
+Adding a question mark before a dataset name or a function name reveals its datails.
+```{r}
+?Wong
+```
+note - there are patiants with more than one measurement.  
+_The Wong dataset is observations are longitudinal data on recovery of IQ after comas of varying duration for 200 subjects. It has 331 row and 7 columns._    
+_1. id: patient id_  
+_2. days: number of days after coma when iq was measured._  
+_3. duration: duration of the coma_  
+_4. sex: sex of the patient (Female or Male)_  
+_5. age: age of the patient._  
+_6. piq: mathematical IQ_  
+_7. viq: verbal IQ_  
+
+### b. In one table, show the type, the minimum, the maximum, the mean and the median (when relevant) of each variable
+```{r}
+summary(wong_data)
+```
+
+### c.In a plot, show the distributions of verbal IQ and mathematical IQ?
+```{r, warning=FALSE}
+library(ggplot2)
+#Using bar plot to show piq's distribuation
+piq_distribution <- ggplot(wong_data, mapping = aes(x=piq)) + 
+  geom_bar(binwidth = 0.5, color='#ad8bd6', fill='white') + 
+  labs(title="Mathematical IQ distribution", x= "Mathematical IQ") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_continuous(breaks = seq(0,200, by=10))
+piq_distribution
+#Using bar plot to show viq's distribuation
+viq_distribution <- ggplot(wong_data, mapping = aes(x=viq, )) + 
+  geom_bar(binwidth = 0.5, color='#ad8bd6', fill='white') + 
+  labs(title="Verbal IQ distribution", x= "Verbal IQ") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_continuous(breaks = seq(0,200, by=10))
+piq_distribution
+```
+
+### Question 3:  
+### a. On a plot, show the relation between verbal and mathematical IQ. Your plot should include relevant axis names, a title and a subtitle.  
+```{r, message=FALSE, warning=FALSE}
+mod1=lm(piq~viq, data=wong_data) # linear model
+
+library(grid)
+library(gridExtra)
+
+grob = grobTree(textGrob(paste("Pearson Correlation Coefficient: ", round(cor(wong_data$piq, wong_data$viq), 4) ), x = 0.3, y = 0.97, 
+hjust = 0, gp = gpar(col = "darkgreen", fontsize = 10, fontface = "bold")))
+
+wong_data$fitted<-fitted(mod1) # fitting the model to the data
+
+raltion_piq_viq <- ggplot(wong_data, aes(x=viq, y=piq)) + 
+  geom_point(color='#ad8bd6') + 
+  geom_line(aes(y=fitted)) + 
+  labs(title="Relation between both IQs", 
+       subtitle = "verbal and mathematical IQ", 
+       x="Verbal IQ",  y= "Mathematical IQ") + 
+  annotation_custom(grob) +
+  theme(plot.title = element_text(hjust = 0.5), #centering the title
+        plot.subtitle = element_text(hjust=0.5)) + #centering the subtitle 
+  scale_x_continuous(breaks = seq(0,200, by=10)) + #adding ticks to x axis
+  scale_y_continuous(breaks = seq(0,200, by=10))   #adding ticks to y axis
+raltion_piq_viq
+```
+  
+There is a positive correlation between viq and piq.  
+  
+### b. Are verbal and mathematical IQs correlated? Which test do you perform to answer this question and why?   
+As we saw in question number 2 both variables are normaly distributed, and since the viq and piq are related - two exams on the same person, the test needs to be paired. Therefore the test we chose is the t test as it checks correlation between 2 variables under the above assumptions.  
+```{r}
+t.test(x = wong_data$viq, y= wong_data$piq, paired = TRUE, alternative = "two.sided")
+```
+We can see in the test results that the p-value is significant - less than the significance level alpha = 0.05 which means there is a correlation between varbal and mathematical IQ.  
+
+### c. In a table, calculate the average total IQ (sum of two IQs) per gender  
+
+```{r, message=FALSE}
+library(dplyr)
+wong_data$totalIQ <-(wong_data$viq + wong_data$piq)/2 #calculating total IQ per person
+wong_by_geander <- wong_data %>% select(sex, totalIQ) %>% group_by(sex) %>% 
+  summarise(meanIQ= mean(totalIQ)) #grouping by gender and summerising the result
+wong_by_geander
+```
+### d. Using a statistical method of your choice, is there a significant difference in IQ between genders? What test do you choose to answer this question and why?  
+```{r}
+# checking if the total Iq is distributed normaly
+qqnorm(wong_data$totalIQ)
+qqline(wong_data$totalIQ)
+```
+  
+Unpaired two-samples t-test is used to compare the mean of two independent group, and the total iq is also distributed normaly. Also the two groups are not related, therefore we can use the unpaired t test.  
+```{r}
+male_iq <- select(filter(wong_data, sex=="Male"), totalIQ)
+female_iq <- select(filter(wong_data, sex=="Female"), totalIQ)
+t.test(x=male_iq, y=female_iq, var.equal = T, 
+              alternative = "two.sided")
+```
+  
+As we can see in the results there is no significant diffarence between the two means - the p-value is higher than the significance level alpha = 0.05. 
+
+### e. Show your results to question 3.d. with a plot.   
+```{r, message=FALSE, warning=FALSE}
+library(ggpubr)
+gender_diff <- ggplot(wong_data, aes(x=as.factor(sex), y=totalIQ, fill = as.factor(sex))) + 
+  labs(title= "Comparing IQ means of both genders", 
+       subtitle = "Unpaired t-test", 
+       x="Gender", y= "ToltalIQ", fill="Gender") + theme_bw() +
+  scale_fill_brewer(palette = "Paired") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        plot.subtitle = element_text(hjust=0.5)) + 
+  geom_boxplot() +
+  stat_compare_means(method = "t.test", 
+                     label.x = 1.4, 
+                     label.y = 140)
+gender_diff
+```
+  
+### Question 4: Using all the variables at your disposition, build the best model possible to explain a patient’s IQ after a coma. You can try as many models as you wish. In your code, show all the formulas you have tested but only show the results of the best model. Explain your method.  
+Looking at the data, and the results so far, we think that duration  of the comma is the variable that will best explain the iq, but the days after the comma are also valuble.  
+First, we need to make sure the other variables are not making "noise".  
+We saw that there is no signifaicant difarence in iq between genders, now, we checked the age.
+```{r, message=FALSE}
+mod1=lm(totalIQ~age, data=wong_data) # linear model
+summary(mod1)
+```
+As expected the p-value is not significant and therefore there is no relation.  
+
+Now we can look at the distribution of days and duration:
+```{r}
+days_hist <- hist(wong_data$days)
+duration_hist <- hist(wong_data$duration)
+```
+
+Since there is a very small portion of values above 60 duration days and above 200 days before the test, in order to see the distribution of the majoraty of the values we excluded them and saved the new dataset in "wong_data_z" variable, plotted in a histogram again.
+
+```{r}
+wong_data_z <- wong_data %>% filter(duration < 60, days < 200)
+
+#look at the distribution of days and duration after reduction.
+hist_days_new <- hist(wong_data_z$days)
+hist_duration_new <- hist(wong_data_z$duration)
+```
+  
+Now we can see the distribution better. These values are unusual, therefore they may influence on the model, for this reason we continue with the filtered dataset.
+
+```{r, message=FALSE, warning=FALSE}
+library("lme4")
+iq_lm1 <- lm(totalIQ ~ duration, data = wong_data_z)
+iq_lm2 <- lm(totalIQ ~ duration + days, data = wong_data_z)
+iq_lmer1 <- lm(totalIQ ~ duration + (1 | days), data = wong_data_z)
+iq_lm3 <- lm(totalIQ ~ duration*days, data = wong_data_z)
+summary(iq_lm2) #best
+```
+   
+As written above, the iq after a comma is best explained by the duration of the comma and days after coma when iq was measured.  
+First we modeled duration alone (iq_lm1) and duration with days as a fixed affect (iq_lm2). since the days are not continues and might be just "noise" We need to control we tried looking at the days as categorical values and using a mixed effect model to eliminate the "noise" (iq_lmer1) and finaly, modeled the iq as duration of the comma according to the number of days measured after the comma (iq_lm3).  
+The results are most significant for duration and days (iq_lm2) as expected.   
+These results are as we expected and make sense - since the duration of the comma is most likely to affect the iq and the days measured after the comma might effect the result as it takes time to recover so the test can reflect the "true" IQ.  
+
+### Question 5: Create a model to explain how much time it takes for a patient to recover based on the desired IQ level and the duration of the coma.    
+```{r}
+model_days_to_recover <- lm(days ~ duration + totalIQ, data=wong_data_z)
+summary(model_days_to_recover)
+```
+  
+Ploting the model to see it visualy.
+```{r}
+wong_data_z$fitted<-fitted(model_days_to_recover) #fit
+ggplot(wong_data_z, aes(x=duration ,y=days,color=totalIQ)) + 
+  geom_point(color="grey") + #color original points in grey
+  geom_point(aes(y=fitted)) +
+  geom_smooth(aes(y=fitted), method = "lm")
+```
+  
+This model is significant for the totalIq and coma duration therefore we can use this model to predict how many days is needed before measuring IQ to get the desired result.  
+
+### 6. Considering Marc had a global IQ of 95 before his accident, how much time would it take to recover after his comas if he wakes up after:  
+  
+### a. One week of coma.  
+```{r}
+days_to_recover_week_coma <- predict(model_days_to_recover, data.frame(totalIQ=95 , duration=c(0,7)))
+days_to_recover_week_coma
+```
+  
+after a one week coma, it would take about 89 days.  
+
+### b. Two weeks of coma.  
+```{r}
+days_to_recover_twoWeek_coma <- predict(model_days_to_recover, data.frame(totalIQ=95 , duration=c(0,14)))
+days_to_recover_twoWeek_coma
+```
+   
+After a two week coma, it would take about 96 days.  
+As expected- the longer the coma - the longer time to recover.  
+
+### c. Calculate the speed of IQ recovery in each case (Gain of IQ points / coma duration).  
+
+Predicting the iq with the duration and days (predicted from initial IQ)  
+```{r}
+iq_after_coma_week <- predict(iq_lm2, data.frame(duration=7, days=89))
+gain_Of_iq_points_week = (95-iq_after_coma_week)/7
+gain_Of_iq_points_week
+```
+
+One week - 0.53 IQ points a day.  
+
+```{r}
+iq_after_coma_two_weeks <-predict(iq_lm2, data.frame(duration=14, days=96))
+gain_Of_iq_points_two_weeks = (95 - iq_after_coma_two_weeks)/14
+gain_Of_iq_points_two_weeks
+```
+
+Two weeks - 0.43 IQ points a day.  
+This also supports our outcome and hipothesis- The longer the coma, the longer it will take to recover.
+
